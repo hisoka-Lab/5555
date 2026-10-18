@@ -1,0 +1,11 @@
+{
+  "name": "growfox-daily-automation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "daily": "node scripts/growfox-daily.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.48.0"
+  }
+}
