@@ -4,11 +4,13 @@
  * Reads GROWFOX_EMAIL / GROWFOX_PASSWORD from env (never commit secrets).
  *
  * Flow:
- * 1) Claim daily missions (+ bonus clear)
- * 2) Spin Daily gacha while Login Tokens allow
- * 3) Gold gacha via duplicate-exchange (3 same cards)
- * 4) Lucky ticket spins + salt exchange free spins
- * 5) Use ALL POINTS_* cards (การ์ดบวกคะแนน)
+ * 1) Visit battle/profile/shop/daily to unlock missions
+ * 2) Claim daily login
+ * 3) Spin Daily gacha (completes "Open a Card")
+ * 4) Claim missions (+ clear bonus)
+ * 5) Gold gacha via duplicate-exchange
+ * 6) Lucky / salt / free spins
+ * 7) Use ALL POINTS_* cards (การ์ดบวกคะแนน)
  */
 import { chromium } from 'playwright';
 
@@ -38,7 +40,13 @@ async function main() {
   ]);
   if (page.url().includes('/login')) throw new Error('Login failed');
 
-  await page.goto(`${BASE}/internal-profile/`, { waitUntil: 'networkidle' });
+  // Unlock visit-based missions first
+  for (const path of ['/internal-battle/', '/internal-profile/', '/internal-shop/', '/internal-shop/daily/']) {
+    await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    log('visited', path);
+  }
+
   const csrf = await page.evaluate(() => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '');
 
   const api = (path, body = {}) =>
@@ -57,20 +65,35 @@ async function main() {
 
   const summary = { missions: [], daily: [], gold: [], lucky: [], free: [], pointsUsed: [], awarded: 0 };
 
-  // Daily login claim (ignore if already claimed)
   summary.claim = (await api('/api/daily-login/claim/', {})).json;
+  log('claim', summary.claim?.success ?? summary.claim?.error);
 
-  for (const mission_id of ['arena', 'deck', 'pull', 'shop', 'clear']) {
+  // Claim visit missions that are already done (deck/shop/arena), then spin daily, then pull/clear
+  for (const mission_id of ['arena', 'deck', 'shop']) {
     const r = await api('/api/daily-login/mission/', { mission_id });
     summary.missions.push({ mission_id, ...r.json });
-    log('mission', mission_id, r.json?.granted, 'tokens', r.json?.login_tokens);
+    log('mission', mission_id, r.json?.granted ?? r.json?.error, 'tokens', r.json?.login_tokens);
   }
 
   for (let i = 0; i < 10; i++) {
     const r = await api('/api/shop/purchase/', { box_type: 'daily' });
     summary.daily.push(r.json);
-    log('daily', i, r.json?.success, r.json?.card?.display, 'tokens', r.json?.tokens_after);
+    log('daily', i, r.json?.success, r.json?.card?.display || r.json?.error, 'tokens', r.json?.tokens_after);
     if (!r.json?.success) break;
+  }
+
+  for (const mission_id of ['pull', 'clear']) {
+    const r = await api('/api/daily-login/mission/', { mission_id });
+    summary.missions.push({ mission_id, ...r.json });
+    log('mission', mission_id, r.json?.granted ?? r.json?.error, 'tokens', r.json?.login_tokens);
+  }
+
+  // Extra daily spins from clear bonus tokens
+  for (let i = 0; i < 5; i++) {
+    const r = await api('/api/shop/purchase/', { box_type: 'daily' });
+    if (!r.json?.success) break;
+    summary.daily.push(r.json);
+    log('daily-extra', i, r.json.card?.display, 'tokens', r.json.tokens_after);
   }
 
   const goldTypes = [
@@ -139,7 +162,6 @@ async function main() {
     return cards.length;
   }
 
-  // Use point cards, then once more after any late spins
   await useAllPointCards();
   await useAllPointCards();
 
