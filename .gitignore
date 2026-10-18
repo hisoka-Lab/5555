@@ -4,3 +4,4 @@
 *.local
 credentials*
 secrets/
+node_modules/
